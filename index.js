@@ -1,67 +1,79 @@
 import express from "express";
 import mongoose from "mongoose";
 import userRouter from "./routes/userRouter.js";
-import jwt from "jsonwebtoken";
 import productRouter from "./routes/productRouter.js";
+import orderRouter from "./routes/orderRoute.js";
+import jwt from "jsonwebtoken";
 import cors from "cors";
 import dotenv from "dotenv";
-import orderRouter from "./routes/orderRoute.js";
 
 dotenv.config();
 
-const app = express()
-app.use(cors())
+const app = express();
 
-app.use(express.json())
+app.use(cors());
+app.use(express.json());
 
-app.use(
-    (req,res,next)=>{
+/*
+JWT AUTH MIDDLEWARE (FIXED)
+*/
+app.use((req, res, next) => {
 
-        let token = req.header("Authorization")
+    const header = req.header("Authorization");
 
-        if(token != null){
-            token = token.replace("Bearer ","")
-            jwt.verify(token, process.env.JWT_SECRET,
-                (err, decoded)=>{
-                    if(decoded == null){
-                        res.json({
-                            message: "Invalid token please login again"
-                        })
-                        return
-                    }else{
-                        req.user = decoded
-                    }
-                }
-            )
+    if (!header) {
+        req.user = null;
+        return next();
+    }
 
+    const token = header.replace("Bearer ", "");
+
+    jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+
+        if (err) {
+            req.user = null;
+        } else {
+            req.user = decoded;
         }
-        next()
-    }
-)
 
-const connectionString = process.env.MONGO_URI
+        next();
 
+    });
 
-mongoose.connect(connectionString).then(
-    ()=>{
-        console.log("Database connected Successfully")
-    }
-).catch(
-    ()=>{
-        console.log("Database connection failed")
-    }
-)
+});
 
 
+/*
+DATABASE CONNECTION (FIXED)
+*/
+mongoose.connect(process.env.MONGO_URI, {
+
+    useNewUrlParser: true,
+    useUnifiedTopology: true
+
+})
+.then(() => {
+    console.log("✅ MongoDB Connected");
+})
+.catch((err) => {
+    console.log("❌ MongoDB Connection Failed");
+    console.log(err);
+});
 
 
-app.use("/api/users",userRouter)
-app.use("/api/products", productRouter)
-app.use("/api/orders", orderRouter)
+/*
+ROUTES
+*/
+app.use("/api/users", userRouter);
+app.use("/api/products", productRouter);
+app.use("/api/orders", orderRouter);
 
 
-app.listen(5000, 
-    ()=>{
-        console.log("Server is running on port 5000")
-    }
-)
+/*
+SERVER START
+*/
+const PORT = process.env.PORT || 5000;
+
+app.listen(PORT, () => {
+    console.log(`✅ Server running on port ${PORT}`);
+});
