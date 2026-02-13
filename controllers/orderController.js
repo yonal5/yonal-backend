@@ -2,187 +2,245 @@ import Order from "../models/order.js";
 import Product from "../models/product.js";
 import { isAdmin, isCustomer } from "./userController.js";
 
+
+/*
+CREATE ORDER
+*/
 export async function createOrder(req, res) {
-	//CBC0000001
 
-	// if(req.user == null){
-	//     res.status(401).json(
-	//         {
-	//             message: "Unauthorized user"
-	//         }
-	//     )
-	//     return
-	// }
+    try {
 
-	try {
-		const user = req.user;
-		if (user == null) {
-			res.status(401).json({
-				message: "Unauthorized user",
-			});
-			return;
-		}
+        if (!req.user) {
+            return res.status(401).json({
+                message: "Login required"
+            });
+        }
 
-		const orderList = await Order.find().sort({ date: -1 }).limit(1);
+        const {
+            customerName,
+            phone,
+            address,
+            items
+        } = req.body;
 
-		let newOrderID = "CBC0000001";
 
-		if (orderList.length != 0) {
-			let lastOrderIDInString = orderList[0].orderID; //"CBC0000123"
-			let lastOrderNumberInString = lastOrderIDInString.replace("CBC", ""); //"0000123"
-			let lastOrderNumber = parseInt(lastOrderNumberInString); //123
-			let newOrderNumber = lastOrderNumber + 1; //124
-			//padStart
-			let newOrderNumberInString = newOrderNumber.toString().padStart(7, "0"); //"0000124"
+        if (!address)
+            return res.status(400).json({
+                message: "Address required"
+            });
 
-			newOrderID = "CBC" + newOrderNumberInString; //"CBC0000124"
-		}
 
-		let customerName = req.body.customerName;
-		if (customerName == null) {
-			customerName = user.firstName + " " + user.lastName;
-		}
+        if (!items || !Array.isArray(items) || items.length === 0)
+            return res.status(400).json({
+                message: "Cart empty"
+            });
 
-		let phone = req.body.phone;
-		if (phone == null) {
-			phone = "Not provided";
-		}
 
-		const itemsInRequest = req.body.items;
+        /*
+        GENERATE ORDER ID
+        */
+        const lastOrder = await Order
+            .findOne()
+            .sort({ date: -1 });
 
-		if (itemsInRequest == null) {
-			res.status(400).json({
-				message: "Items are required to place an order",
-			});
-			return;
-		}
 
-		if (!Array.isArray(itemsInRequest)) {
-			res.status(400).json({
-				message: "Items should be an array",
-			});
-			return;
-		}
+        let orderID = "CBC0000001";
 
-		const itemsToBeAdded = [];
-		let total = 0;
+        if (lastOrder) {
 
-		for (let i = 0; i < itemsInRequest.length; i++) {
-			const item = itemsInRequest[i];
+            const lastNumber =
+                parseInt(lastOrder.orderID.replace("CBC", ""));
 
-			const product = await Product.findOne({ productID: item.productID });
+            orderID =
+                "CBC" +
+                (lastNumber + 1)
+                .toString()
+                .padStart(7, "0");
 
-			if (product == null) {
-				res.status(400).json({
-					code: "not-found",
-					message: `Product with ID ${item.productID} not found`,
-					productID: item.productID,
-				});
-				return;
-			}
+        }
 
-			if (product.stock < item.quantity) {
-				res.status(400).json({
-					code: "stock",
-					message: `Insufficient stock for product with ID ${item.productID}`,
-					productID: item.productID,
-					availableStock: product.stock,
-				});
-				return;
-			}
 
-			itemsToBeAdded.push({
-				productID: product.productID,
-				quantity: item.quantity,
-				name: product.name,
-				price: product.price,
-				image: product.images[0],
-			});
+        let total = 0;
 
-			total += product.price * item.quantity;
-		}
+        const orderItems = [];
 
-		const newOrder = new Order({
-			orderID: newOrderID,
-			items: itemsToBeAdded,
-			customerName: customerName,
-			email: user.email,
-			phone: phone,
-			address: req.body.address,
-			total: total,
-		});
 
-		const savedOrder = await newOrder.save();
+        /*
+        PROCESS ITEMS
+        */
+        for (const item of items) {
 
-		// for(let i=0; i<itemsToBeAdded.length; i++){
-		//     const item = itemsToBeAdded[i]
+            const product =
+                await Product.findOne({
+                    productID: item.productID
+                });
 
-		//     await Product.updateOne(
-		//         {productID: item.productID},
-		//         {$inc : {stock : -item.quantity}}
-		//     )
-		// }
+            if (!product)
+                return res.status(400).json({
+                    message:
+                        "Product not found: " +
+                        item.productID
+                });
 
-		// for(let i=0; i<itemsToBeAdded.length; i++){
-		//     const item = itemsToBeAdded[i]
 
-		//     const product = await Product.findOne({productID:  item.productID})
+            if (product.stock < item.quantity)
+                return res.status(400).json({
+                    message:
+                        product.name +
+                        " out of stock"
+                });
 
-		//     const newQty = product.stock - item.quantity
 
-		//     await Product.updateOne(
-		//         {productID: item.productID},
-		//         {stock : newQty}
-		//     )
-		// }
+            /*
+            REDUCE STOCK
+            */
+            product.stock -= item.quantity;
 
-		res.status(201).json({
-			message: "Order created successfully",
-			order: savedOrder,
-		});
-	} catch (err) {
-		console.log(err);
-		res.status(500).json({
-			message: "Internal server error",
-		});
-	}
+            await product.save();
+
+
+            orderItems.push({
+
+                productID: product.productID,
+                quantity: item.quantity,
+                name: product.name,
+                price: product.price,
+                image: product.images[0]
+
+            });
+
+
+            total += product.price * item.quantity;
+
+        }
+
+
+        /*
+        CREATE ORDER
+        */
+        const order = await Order.create({
+
+            orderID,
+
+            items: orderItems,
+
+            customerName:
+                customerName ||
+                req.user.firstName +
+                " " +
+                req.user.lastName,
+
+            email: req.user.email,
+
+            phone: phone || "Not provided",
+
+            address,
+
+            total
+
+        });
+
+
+        res.status(201).json({
+
+            message: "Order created successfully",
+
+            order
+
+        });
+
+
+    }
+    catch (err) {
+
+        console.log(err);
+
+        res.status(500).json({
+
+            message: "Server error"
+
+        });
+
+    }
+
 }
 
+
+/*
+GET ORDERS
+*/
 export async function getOrders(req, res) {
-	if (isAdmin(req)) {
-		const orders = await Order.find().sort({ date: -1 });
-		res.json(orders);
-	} else if (isCustomer(req)) {
-		const user = req.user;
-		const orders = await Order.find({ email: user.email }).sort({ date: -1 });
-		res.json(orders);
-	} else {
-		res.status(403).json({
-			message: "You are not authorized to view orders",
-		});
-	}
+
+    try {
+
+        if (isAdmin(req)) {
+
+            const orders =
+                await Order.find()
+                .sort({ date: -1 });
+
+            return res.json(orders);
+
+        }
+
+        if (isCustomer(req)) {
+
+            const orders =
+                await Order.find({
+                    email: req.user.email
+                })
+                .sort({ date: -1 });
+
+            return res.json(orders);
+
+        }
+
+        res.status(403).json({
+            message: "Unauthorized"
+        });
+
+    }
+    catch (err) {
+
+        res.status(500).json({
+            message: "Server error"
+        });
+
+    }
+
 }
 
-export async function updateOrderStatus(req, res) {
-	if (!isAdmin(req)) {
-		res.status(403).json({
-			message: "You are not authorized to update order status",
-		});
-		return;
-	}
-	const orderID = req.params.orderID;
-	const newStatus = req.body.status;
-	try {
-		await Order.updateOne({ orderID: orderID }, { status: newStatus });
 
-		res.json({
-			message: "Order status updated successfully",
-		});
-	} catch (err) {
-		console.error(err);
-		res.status(500).json({
-			message: "Failed to update order status",
-		});
-		return;
-	}
+/*
+UPDATE STATUS
+*/
+export async function updateOrderStatus(req, res) {
+
+    try {
+
+        if (!isAdmin(req))
+            return res.status(403).json({
+                message: "Admin only"
+            });
+
+
+        await Order.updateOne(
+            { orderID: req.params.orderID },
+            { status: req.body.status }
+        );
+
+
+        res.json({
+            message: "Status updated"
+        });
+
+    }
+    catch (err) {
+
+        res.status(500).json({
+            message: "Server error"
+        });
+
+    }
+
 }
